@@ -1,0 +1,6 @@
+#!/bin/bash
+
+NAME="origin-mounter"
+
+logger -p syslog.info "mount-helper running in $NAME: mount $@"
+docker exec ${NAME} mount "$@"

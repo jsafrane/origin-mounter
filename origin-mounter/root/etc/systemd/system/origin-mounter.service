@@ -1,0 +1,15 @@
+[Unit]
+Description=Origin Mounter Helper
+After=docker.service
+Wants=docker.service
+Before=origin-node.service
+
+[Service]
+ExecStartPre=-/usr/bin/docker rm -f origin-mounter
+ExecStart=/usr/bin/docker run --name origin-mounter --privileged -v /var/lib/origin:/var/lib/origin:rshared origin/mounter
+ExecStop=/usr/bin/docker stop origin-node
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,63 @@
+commit 77462ec7061a186a0f834f3f8108d8c935aba0ff
+Author: Jan Safranek <jsafrane@redhat.com>
+Date:   Tue Mar 7 16:39:59 2017 +0100
+
+    Use mounter helper in nsenter mounter.
+
+diff --git a/vendor/k8s.io/kubernetes/cmd/kubelet/app/server.go b/vendor/k8s.io/kubernetes/cmd/kubelet/app/server.go
+index 86f2a32..a46fed1 100644
+--- a/vendor/k8s.io/kubernetes/cmd/kubelet/app/server.go
++++ b/vendor/k8s.io/kubernetes/cmd/kubelet/app/server.go
+@@ -122,7 +122,7 @@ func UnsecuredKubeletDeps(s *options.KubeletServer) (*kubelet.KubeletDeps, error
+ 	var writer kubeio.Writer = &kubeio.StdWriter{}
+ 	if s.Containerized {
+ 		glog.V(2).Info("Running kubelet in containerized mode (experimental)")
+-		mounter = mount.NewNsenterMounter()
++		mounter = mount.NewNsenterMounter(s.ExperimentalMounterPath)
+ 		writer = &kubeio.NsenterWriter{}
+ 	}
+ 
+diff --git a/vendor/k8s.io/kubernetes/pkg/util/mount/nsenter_mount.go b/vendor/k8s.io/kubernetes/pkg/util/mount/nsenter_mount.go
+index f3a4afc..ccbeff4 100644
+--- a/vendor/k8s.io/kubernetes/pkg/util/mount/nsenter_mount.go
++++ b/vendor/k8s.io/kubernetes/pkg/util/mount/nsenter_mount.go
+@@ -55,16 +55,18 @@ import (
+ //   https://www.kernel.org/doc/Documentation/filesystems/sharedsubtree.txt
+ type NsenterMounter struct {
+ 	// a map of commands to their paths on the host filesystem
+-	paths map[string]string
++	paths       map[string]string
++	mounterPath string
+ }
+ 
+-func NewNsenterMounter() *NsenterMounter {
++func NewNsenterMounter(mounterPath string) *NsenterMounter {
+ 	m := &NsenterMounter{
+ 		paths: map[string]string{
+ 			"mount":   "",
+ 			"findmnt": "",
+ 			"umount":  "",
+ 		},
++		mounterPath: mounterPath,
+ 	}
+ 	// search for the mount command in other locations besides /usr/bin
+ 	for binary := range m.paths {
+@@ -127,10 +129,17 @@ func (n *NsenterMounter) doNsenterMount(source, target, fstype string, options [
+ // makeNsenterArgs makes a list of argument to nsenter in order to do the
+ // requested mount.
+ func (n *NsenterMounter) makeNsenterArgs(source, target, fstype string, options []string) []string {
++	var cmd string
++	if len(n.mounterPath) == 0 {
++		cmd = "mount"
++	} else {
++		cmd = n.mounterPath
++	}
++
+ 	nsenterArgs := []string{
+ 		"--mount=/rootfs/proc/1/ns/mnt",
+ 		"--",
+-		n.absHostPath("mount"),
++		cmd,
+ 	}
+ 
+ 	args := makeMountArgs(source, target, fstype, options)
