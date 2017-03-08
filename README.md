@@ -1,10 +1,16 @@
 # Mount container for Origin
 
-Goal: **remove `mount.glusterfs` (and similar mount utilities) from Atomic Host and run them in a container.**
+Goal: **remove `mount.glusterfs` (and similar mount utilities) from Atomic Host and run them in a container.** As consequence, any fuse daemon will run in the container too.
 
 ## Existing solution
 
-We ship Atomic Host with all `mount.xyz` utilities that Origin needs in the AH image. OpenShift node itself runs in a docker container and uses `/var/lib/origin` from the host as a slave bind-mount. OpenShift inside the container then uses `nsenter /host/proc/1/ns/mnt mount -t <fs> <what> /var/lib/origin/openshift.local.volumes/pods/...` to mount stuff on the host, which then gets propagated into OpenShift node container.
+* We ship Atomic Host with all `mount.<fstype>` utilities in the AH image.
+* OpenShift node itself runs in a docker container and uses `/var/lib/origin` from the host as a slave bind-mount.
+  * OpenShift node inside the container then uses this magic call to mount external volumes to the host, which then get propagated into the OpenShift node container:
+        
+    ```
+    nsenter /host/proc/1/ns/mnt mount -t <fs> <what> /var/lib/origin/openshift.local.volumes/pods/...
+    ```
 
 This requires `mount.<fstype>` to be installed on the host and all fuse daemons also run on the host.
 
@@ -23,29 +29,54 @@ This requires `mount.<fstype>` to be installed on the host and all fuse daemons 
   * Exposes `/var/lib/origin-mount/mounter` on the host (created by `atomic install origin-master`)
     * This `/var/lib/origin-mount/mounter` is a tiny script that just calls `docker exec origin-mounter "$@"` and mount actually happens inside the container.
 
-## Implementation
 
-### Changes in our packages
-* Kubernetes must be changed to use mount helper in `nsenter_mount.go`, see a patch lying around.
-* Docker service must be changed **not to contain** `MountFlags=slave`
-* Create and maintain `origin/mounter` docker image.
 
-### Configuration (ansible scripts?)
-* `node-config.yaml` of OpenShift node needs to be changed to contain:
+# Usage
+
+Quick and dirty notes to try code in this repo.
+
+## Configuration
+
+* Patch origin with `origin-nsenter-helper.patch`, build `openshift/node` container image with it and distribute it to all nodes.
+
+* On all nodes, **remove** or comment out this line in `/lib/systemd/system/docker.service` and restart docker:
+  
+  ```
+  MountFlags=slave
+  ```
+
+* On all nodes, build `origin/mounter` container image:
+  
+  ```
+  $ cd origin-mounter
+  $ docker build -t origin/mounter .
+  ```
+
+* On all nodes, install `origin-mounter.service` from `origin/mounter` image:
+  
+  ```
+  $ atomic install origin/mounter
+  $ systemctl start origin-mounter
+  ```
+
+* On all nodes, edit node-config.yaml and add:
+  
   ```
   kubeletArguments:
     experimental-mounter-path:
     - "/var/lib/origin-mounter/mounter"
   ```
-* `atomic install origin/mounter` must be executed on all nodes. It pulls the mounter image from a repository, creates `/var/lib/origin-mount/mounter` and a systemd service that runs the container on boot. After that, either reboot or `systemctl start origin-mounter` is needed.
+  
+  Restart the nodes.
 
-### Container update
+Now create a pod that uses glusterfs and see gluster fuse daemon running inside `origin-mounter` mounter container instead of on the host.
+
+## Update
 
 When a new version of `origin/mounter` is released (via errata?), admin must manually update all nodes one by one:
 * Drain a node.
 * Update `origin/mounter` image.
 * Reboot the node (restart of `origin-mounter` service *could* be enough, however I don't trust docker and shared bind mounts...)
-
 
 ## Future
 
